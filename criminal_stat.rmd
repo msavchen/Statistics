@@ -1,0 +1,551 @@
+---
+title: "project"
+author: "Savchenko, Piekarz"
+date: "15 06 2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE}
+library(splines)
+library(MASS)
+library(ISLR)
+library(gam)
+library(leaps)
+library(tree)
+library(randomForest)
+library(gbm)
+library(class)
+```
+
+# Dataset Arrests
+```{r}
+Arrests <- read.csv("https://raw.githubusercontent.com/SieSiongWong/DATA-607/master/Arrests.csv", header=TRUE, sep=",")
+head(Arrests)
+Arrests = na.omit(Arrests)
+attach(Arrests)
+```
+# Regresja liniowa 
+**Prosta regresja liniowa checks względem age**
+```{r}
+lmFitSimple <- lm(checks ~ age, data = Arrests)
+summary(lmFitSimple)
+```
+Z estimate: pod czas zwiększenia age o 1, age wzrasta o 0.025002.  
+Standart error chcemy mieć jak najmniejszy - pokazuje odchylenie od estimate, tzn w tym przypadku wartość 0.025002 może mieć odchylenie 0.002537.  
+Pr(t) - prawdopodobieństwo że współczynniki nie są zerowe przez prypadek, im mniejszy  tym większe prawdopodobieństwo, że predyktory i odpowiedż są zależene i że możemy odrzucić hipotezę zerową. W naszym przypadku zależność jest wysoka. (Im mniejsze Pr(t) tym wieksza zależność)  
+RSE pokazuje jakość regresji. W tym przypoadku jest średnio dopasowany: error jest 1.525 na 1.040227. 
+Multiple R-squared pakazuje na ile jest dopasowana data do modelu. w naszym przypadku widzimy, że ta wartość jest bardzo mała, co wskazuje na złę dopasowanie.  
+F-Statistic pokazuje zależność pomiędzy predyktorem a odpowiedzią. Im większe od 1 tym większa zależność. 
+
+# Modele nieliniowe
+
+**Regresja wielomianowa stopnia 4 checks względem age**
+```{r}
+fit.poly <- lm(checks ~ poly(age, 4), data = Arrests)
+summary(fit.poly)
+```
+**Z użyciem standardowej bazy wielomianów X,X2,X3,X4**
+```{r}
+fit.poly.raw <- lm(checks ~ poly(age, 4, raw = TRUE), data = Arrests)
+summary(fit.poly.raw)
+```
+Patrzac na wyniki mozemy zauważyć, że regresii liniowej wystarczy i daje najlepszy wynik: Pr(>|t|) = 2e-16.
+
+**Prosta regresji na tle danych**
+```{r}
+plot(age, checks)
+abline(lmFitSimple)
+```
+
+**Obraz dopasowania zawierający krzywe błędu standardowego**
+```{r}
+age.lims <- range(age)
+age.grid <- seq(age.lims[1], age.lims[2])
+pred.poly <- predict(fit.poly, list(age = age.grid), se.fit = TRUE)
+se.bands <- cbind(pred.poly$fit + 2 * pred.poly$se.fit, 
+                  pred.poly$fit - 2 * pred.poly$se.fit)
+plot(age, checks, col = "darkgrey", cex = 0.5, xlim = age.lims)
+lines(age.grid, pred.poly$fit, col = "red", lwd = 2)
+matlines(age.grid, se.bands, col = "red", lty = "dashed")
+```
+
+**Regresja logistyczna wielomianowa**
+
+Chcemy skonstruować klasyfikator z dwoma klasami: warunek checks > 2 i checks < 2. 
+Predyktorem jest age.
+```{r}
+fit.log.poly <- glm(I(checks > 2) ~ poly(age, 4), data = Arrests, family = binomial)
+summary(fit.log.poly)
+```
+```{r}
+pred.log.poly <- predict(fit.log.poly, list(age = age.grid), se.fit = TRUE)
+pred.probs <- plogis(pred.log.poly$fit)
+se.bands.logit <- cbind(pred.log.poly$fit + 2 * pred.log.poly$se.fit,
+                        pred.log.poly$fit - 2 * pred.log.poly$se.fit)
+se.bands <- plogis(se.bands.logit)
+plot(age, I(checks > 2), xlim = age.lims, ylim = c(0, 1), col = "darkgrey", cex = 0.5, ylab = "P(checks > 2 | age)")
+lines(age.grid, pred.probs, col = "red", lwd = 2)
+matlines(age.grid, se.bands, lty = "dashed", col = "red")
+```
+
+Z danego wykresu możemy zauważyć zmianę checks ze zmianą wieku.
+
+**Funkcje schodkowe**
+```{r}
+table(cut(age, breaks = 4))
+```
+```{r}
+fit.step <- lm(checks ~ cut(age, 4), data = Arrests)
+pred.step <- predict(fit.step, list(age = age.grid), se.fit = TRUE)
+se.bands <- cbind(pred.step$fit + 2 * pred.step$se.fit, 
+                  pred.step$fit - 2 * pred.step$se.fit)
+plot(age, checks, col = "darkgrey", cex = 0.5, xlim = age.lims)
+lines(age.grid, pred.step$fit, col = "red", lwd = 2)
+matlines(age.grid, se.bands, col = "red", lty = "dashed")
+```
+
+
+**Funkcje sklejane**
+
+Z domyślnym stopniem funkcji sklejanych = 3.
+```{r}
+fit.bs.knots <- lm(checks ~ bs(age, knots = c(25, 40, 60)), data = Arrests)
+pred.bs.knots <- predict(fit.bs.knots, list(age = age.grid), se.fit = TRUE)
+plot(age, checks, cex = 0.5, col = "darkgrey")
+lines(age.grid, pred.bs.knots$fit, col = "red", lwd = 2)
+lines(age.grid, pred.bs.knots$fit + 2 * pred.bs.knots$se.fit, col = "red",
+      lty = "dashed")
+lines(age.grid, pred.bs.knots$fit - 2 * pred.bs.knots$se.fit, col = "red",
+      lty = "dashed")
+abline(v = c(25, 40, 60), lty = "dotted")
+```
+
+Sprobujemy zmienić rozmieszczenie węzłów.
+```{r}
+fit.bs.knots <- lm(checks ~ bs(age, knots = c(20, 35, 50)), data = Arrests)
+pred.bs.knots <- predict(fit.bs.knots, list(age = age.grid), se.fit = TRUE)
+plot(age, checks, cex = 0.5, col = "darkgrey")
+lines(age.grid, pred.bs.knots$fit, col = "red", lwd = 2)
+lines(age.grid, pred.bs.knots$fit + 2 * pred.bs.knots$se.fit, col = "red",
+      lty = "dashed")
+lines(age.grid, pred.bs.knots$fit - 2 * pred.bs.knots$se.fit, col = "red",
+      lty = "dashed")
+abline(v = c(25, 40, 60), lty = "dotted")
+```
+
+Dopasowanie modelu wykorzystującego funkcje sklejane o ustalonej liczbie stopni swobody. Węzły są rozmieszczane automatycznie.
+```{r}
+fit.bs.df <- lm(checks ~ bs(age, df = 6), data = Arrests)
+pred.bs.df <- predict(fit.bs.df, list(age = age.grid), se.fit = TRUE)
+plot(age, checks, cex = 0.5, col = "darkgrey")
+lines(age.grid, pred.bs.df$fit, col = "red", lwd = 2)
+lines(age.grid, pred.bs.df$fit + 2 * pred.bs.df$se.fit, col = "red",
+      lty = "dashed")
+lines(age.grid, pred.bs.df$fit - 2 * pred.bs.df$se.fit, col = "red",
+      lty = "dashed")
+bs.knots <- attr(bs(age, df = 6), "knots")
+abline(v = bs.knots, lty = "dotted")
+```
+
+
+Zmieńmy liczbę swobody z 6 na 10:
+```{r}
+fit.bs.df <- lm(checks ~ bs(age, df = 10), data = Arrests)
+pred.bs.df <- predict(fit.bs.df, list(age = age.grid), se.fit = TRUE)
+plot(age, checks, cex = 0.5, col = "darkgrey")
+lines(age.grid, pred.bs.df$fit, col = "red", lwd = 2)
+lines(age.grid, pred.bs.df$fit + 2 * pred.bs.df$se.fit, col = "red",
+      lty = "dashed")
+lines(age.grid, pred.bs.df$fit - 2 * pred.bs.df$se.fit, col = "red",
+      lty = "dashed")
+bs.knots <- attr(bs(age, df = 6), "knots")
+abline(v = bs.knots, lty = "dotted")
+```
+
+**Naturalne sześcienne funkcje sklejane**
+```{r}
+fit.ns <- lm(checks ~ ns(age, df = 4), data = Arrests)
+pred.ns <- predict(fit.ns, list(age = age.grid), se.fit = TRUE)
+plot(age, checks, cex = 0.5, col = "darkgrey")
+lines(age.grid, pred.ns$fit, col = "red", lwd = 2)
+lines(age.grid, pred.ns$fit + 2 * pred.ns$se.fit, col = "red",
+      lty = "dashed")
+lines(age.grid, pred.ns$fit - 2 * pred.ns$se.fit, col = "red",
+      lty = "dashed")
+abline(v = attr(ns(age, df = 4), "knots"), lty = "dotted")
+```
+
+Zmieńmy ilość stopni swobody z 4 na 10.
+```{r}
+fit.ns <- lm(checks ~ ns(age, df = 10), data = Arrests)
+pred.ns <- predict(fit.ns, list(age = age.grid), se.fit = TRUE)
+plot(age, checks, cex = 0.5, col = "darkgrey")
+lines(age.grid, pred.ns$fit, col = "red", lwd = 2)
+lines(age.grid, pred.ns$fit + 2 * pred.ns$se.fit, col = "red",
+      lty = "dashed")
+lines(age.grid, pred.ns$fit - 2 * pred.ns$se.fit, col = "red",
+      lty = "dashed")
+abline(v = attr(ns(age, df = 4), "knots"), lty = "dotted")
+```
+
+**Wygładzające funkcje sklejane sześcienne**
+```{r}
+fit.smooth.df <- smooth.spline(age, checks, df = 16)
+plot(age, checks, cex = 0.5, col = "darkgrey")
+lines(fit.smooth.df, col = "red", lwd = 2)
+```
+
+**Regresja lokalna**
+
+Wielomianami stopnia 2 z różnymi stopniami wygładzenia:
+```{r warning=FALSE}
+s <- c(0.2, 0.5)
+fit.loess.1 <- loess(checks ~ age, span = s[1], data = Arrests)
+fit.loess.2 <- loess(checks ~ age, span = s[2], data = Arrests)
+pred.loess.1 <- predict(fit.loess.1, data.frame(age = age.grid))
+pred.loess.2 <- predict(fit.loess.2, data.frame(age = age.grid))
+plot(age, checks, cex = 0.5, col = "darkgrey")
+lines(age.grid, pred.loess.1, col = "red", lwd = 2)
+lines(age.grid, pred.loess.2, col = "blue", lwd = 2)
+legend("topright", legend = paste("s =", s), col = c("red", "blue"), lty = 1,
+       lwd = 2)
+```
+
+Wielomianami stopnia 1:
+```{r warning=FALSE}
+s <- c(0.2, 0.5)
+fit.loess.1 <- loess(checks ~ age, span = s[1], degree = 1, data = Arrests)
+fit.loess.2 <- loess(checks ~ age, span = s[2], degree = 1, data = Arrests)
+pred.loess.1 <- predict(fit.loess.1, data.frame(age = age.grid))
+pred.loess.2 <- predict(fit.loess.2, data.frame(age = age.grid))
+plot(age, checks, cex = 0.5, col = "darkgrey")
+lines(age.grid, pred.loess.1, col = "red", lwd = 2)
+lines(age.grid, pred.loess.2, col = "blue", lwd = 2)
+legend("topright", legend = paste("s =", s), col = c("red", "blue"), lty = 1,
+       lwd = 2)
+```
+
+**Uogólnione modele addytywne (GAMs)**
+```{r}
+fit.gam.ls <- lm(checks ~ ns(age, df = 4) + ns(year, df = 5),
+                 data = Arrests)
+fit.gam.ls
+summary(fit.gam.ls)
+```
+Z użyciem wygładzających funkcji sklejanych:
+```{r warning=FALSE}
+fit.gam.bf <- gam(checks ~ s(age, df = 4) + s(year, df = 5), data = Arrests)
+summary(fit.gam.bf)
+```
+Wykres:
+```{r}
+par(mfrow = c(1, 3))
+plot(fit.gam.bf, col = "red", se = TRUE)
+```
+
+# Selekcja cech w modelach liniowych
+
+**Wybór najepszego podzbioru**
+```{r}
+fit.bs <- regsubsets(checks ~ ., data = Arrests, nvmax = 9)
+fit.bs.summary <- summary(fit.bs)
+fit.bs.summary
+```
+Globalnie najlepszy pozdbior cech - miara Cp
+```{r}
+fit.bs.summary$cp
+```
+Najlepszy podzbiór według kryterium BIC
+```{r}
+bic.min <- which.min(fit.bs.summary$bic)
+bic.min
+fit.bs.summary$bic[bic.min]
+```
+Najlepszy podzbiór według kryterium R2
+```{r}
+bic.max <- which.max(fit.bs.summary$rsq)
+bic.max
+fit.bs.summary$bic[bic.max]
+```
+Najlepszy podzbiór według kryterium Cp
+```{r}
+bic.min <- which.min(fit.bs.summary$cp)
+bic.min
+fit.bs.summary$bic[bic.min]
+```
+
+Możemy zauważyć, że najlepszy podzbiór cech według Cp i BIC- 7 - employed, R2 - 8 - citizen
+
+Widzimy wazność cech na wykresie:
+```{r}
+plot(fit.bs.summary$bic, xlab = "Liczba zmiennych", ylab = "BIC", col = "green",
+     type = "b", pch = 20)
+points(bic.min, fit.bs.summary$bic[bic.min], col = "red", pch = 9)
+```
+
+**Selekcja krokowa do przodu i wstecz**
+```{r}
+fit.forward <- regsubsets(checks ~ ., data = Arrests, nvmax = 8, method = "forward")
+fit.forward.summary <- summary(fit.forward)
+fit.forward.summary
+fit.backward <- regsubsets(checks ~ ., data = Arrests, nvmax = 8, method = "backward")
+fit.backward.summary <- summary(fit.backward)
+fit.backward.summary
+```
+**Wybór modelu przy pomocy metody zbioru walidacyjnego**
+```{r}
+n <- nrow(Arrests)
+train <- sample(c(TRUE, FALSE), n, replace = TRUE)
+test <- !train
+fit.bs.v <- regsubsets(checks ~ ., data = Arrests[train,], nvmax = 8)
+```
+Liczymy estymaty błędów
+```{r}
+predict.regsubsets <- function(object, newdata, id, ...) {
+  model.formula <- as.formula(object$call[[2]])
+  mat <- model.matrix(model.formula, newdata)
+  coefs <- coef(object, id = id)
+  mat[, names(coefs)] %*% coefs
+}
+```
+```{r}
+pred.error <- function(i, model, subset) {
+  pred <- predict(model, Arrests[subset,], id = i)
+  mean((Arrests$checks[subset] - pred)^2)
+}
+val.errors <- sapply(1:8, pred.error, model = fit.bs.v, subset = test)
+val.errors
+```
+**Wybór modelu przy pomocy k-krotnej walidacji krzyżowej**
+```{r}
+k <- 10
+folds <- sample(1:k, n, replace = TRUE)
+validation.errors <- matrix(nrow = k, ncol = 8)
+for (j in 1:k) {
+  fit.bs.cv <- regsubsets(checks ~ ., data = Arrests[folds != j,], nvmax = 8)
+  validation.errors[j,] <- 
+    sapply(1:8, pred.error, model = fit.bs.cv, subset = (folds == j))
+}
+```
+Estymata błędu CV jest teraz średnią błędów w każdej grupie
+```{r}
+cv.errors <- apply(validation.errors, 2, mean)
+cv.errors
+```
+
+# Dataset Arrests
+```{r}
+rm(Arrests)
+library(effects)
+Arrests = na.omit(Arrests)
+attach(Arrests)
+```
+
+# Drzewa
+
+**Drzewa regresyjne**
+
+```{r}
+checks.tree <- tree(checks ~ ., data = Arrests)
+summary(checks.tree)
+```
+
+Residual mean deviance jest strasznie wysokie - 2.111 wiec najprawdopodobniej checks nie jest dobrym przykładem do modelowania drzewa.
+
+
+Wykres:
+```{r}
+plot(checks.tree)
+text(checks.tree)
+```
+
+Widać wyraźnie jak duży wpływ na to czy aresztowany został zwolniony z aresztu czy nie ma ilość aresztowań. Na ilość aresztowań wpływa także status zatrudnienia aresztowanego. Kolor jego skóry też ma znaczenie.Tylko te trzy predykatory zostały użyte w budowaniu drzewa. Reszta zostął pominięta.
+
+
+```{r}
+released.tree <- tree(released ~ ., data = Arrests)
+summary(released.tree)
+```
+
+Residual mean deviance jest toche niższe niż w poprzednim przykładzie, ma wartość 0.8464. Pojawił się błąd przyporządkowania równy 0.1707.
+
+
+Wykres:
+```{r}
+plot(released.tree)
+text(released.tree)
+```
+
+Na to czy aresztowany został zwolniony z aresztu wysoki wpływ ma to czy wcześniej był on karany. Drzewo prowadzi tylko do jednego wyniku, możliwe że ma to związek z wysokimi błędami jakie można odczytać z podsumowania.
+
+
+Zdefiniowanie zbioru testowego i treningowego:
+```{r}
+set.seed(1)
+n <- nrow(Arrests)
+train <- sample(1:n, n / 2)
+test <- -train
+```
+
+Obliczenie błędu testowego drzewa kalsyfikacyjnego 
+
+```{r}
+checks.tree <- tree(checks ~ ., data = Arrests, subset = train)
+checks.pred <- predict(checks.tree, newdata = Arrests[test,])
+mean((checks.pred - Arrests$checks[test])^2)
+
+```
+
+BŁad ten jest wysoki - 2.131588.
+
+
+Wyznaczaenie optymalnego poddrzewa metodą przycinania sterowanego złożonością:
+
+```{r}
+checks.cv <- cv.tree(checks.tree)
+checks.cv
+plot(checks.cv$size, checks.cv$dev, type = "b")
+```
+
+Przycięcie drzewa do poziomu 2 metodą prune.tree():
+
+```{r}
+checks.pruned <- prune.tree(checks.tree, best = 2)
+plot(checks.pruned)
+text(checks.pruned)
+```
+
+Wynik lekko się zmienił, jednak dalej tendencja jest taka sama.
+
+
+**Bagging i lasy losowe**
+
+```{r}
+checks.bag <- randomForest(checks ~ ., data = Arrests, mtry = 5, importance = TRUE)
+checks.bag
+```
+
+Wykres błędu OOB względem liczby drzew: 
+
+```{r}
+plot(checks.bag, type = "l")
+```
+
+Wykrest ma niewielkie wahania, jest praktycznie gładki. na początku szybko maleje potem zwalnia zatrzymując się na poziomie błędu OOB w okolicach 2.2.
+
+Wyznaczenie ważności predykatorów:
+
+```{r}
+importance(checks.bag)
+```
+
+Najważniejszymi predykatorami są released - 87% oraz employed - 72%. najmniej ważne są year - 21% oraz citizen - 25%.
+Można to zobrazowac na wykresie:
+
+```{r}
+varImpPlot(checks.bag)
+```
+
+Oszacowanie błędu testowego:
+
+```{r}
+checks.bag <- randomForest(checks ~ ., data = Arrests, subset = train, mtry = 5,
+                         importance = TRUE)
+checks.pred.bag <- predict(checks.bag, newdata = Arrests[test,])
+mean((checks.pred.bag - Arrests$checks[test])^2)
+```
+
+Błąd ten jest dosyć wysoki - aż 2.255454.
+
+**Lasy losowe**
+
+```{r}
+checks.rf <- randomForest(checks ~ ., data = Arrests, subset = train,
+                        importance = TRUE)
+checks.pred.rf <- predict(checks.rf, newdata = Arrests[test,])
+mean((checks.pred.rf - Arrests$checks[test])^2)
+```
+
+Błąd lasu losowego jest trochę mniejszy niż błąd jego szczególnego przypadku - baggingu. Jest to najmniejszy błąd ze wszystkich trzech metod.
+
+```{r}
+varImpPlot(checks.rf)
+```
+
+Ważność predykatorów się nie zmienia w stosunku do wyników baggingu. Jednak wyniki są trochę bardziej uśrednione.
+
+**Boosting**
+
+```{r}
+checks.boost <- gbm(checks ~ ., data = Arrests[train,], distribution = "gaussian",
+                  interaction.depth = 4, n.trees = 5000, shrinkage = 0.01)
+checks.pred.boost <- predict(checks.boost, newdata = Arrests[test,], n.trees = 5000)
+mean((checks.pred.boost - Arrests$checks[test])^2)
+```
+
+Boosting ma średni błąd - jest trochę lepszy od baggingu a gorszy od zwykłego random forest.
+
+
+# Podstawowe metody klasyfikacji
+
+
+**Regresja logistyczna**
+
+```{r}
+fit.logistic <- glm(as.factor(checks) ~  age + employed + citizen, family = "binomial", data = Arrests)
+summary(fit.logistic)
+```
+
+CitizenYest ma bardzo wysoką wartość Pr(>|z|). o wiele lepiej do modelu nadają się dwa pozostałe predykatory - age oraz employedYes, ponieważ mają one niskie wartości Pr(>|z|).  AIC ma wysoką wartość, im mniejsze tym lepszy wynik. podobnie null deviance i residual deviance, im wyższe tym model będzie gorzej dopasowany. Przy estymowaniu wykonały się 4 iteracje algorytmu Fisher Scoring.
+
+Zdefiniowanie zbioru testowego i treningowego:
+
+```{r}
+train <- year < 2002
+test <- -train
+```
+
+**lda**
+
+```{r}
+fit.lda <- lda(as.factor(checks) ~  age + employed + citizen, data = Arrests, subset = train)
+fit.lda
+```
+
+
+
+```{r}
+pred.lda <- predict(fit.lda, data = Arrests, test=test)
+max(pred.lda$posterior[, 2])
+max(pred.lda$posterior[, 1])
+```
+
+Maksymalne przewidywane prawdopodobieństwo wzrostu liczby aresztowanych ludzi z wiekszą ilością aresztowań w 2002: 0.1962975
+Maksymalne przewidywane prawdopodobieństwo spadku liczby aresztowanych ludzi z wiekszą ilością aresztowań w 2002: 0.4944898
+
+**qda**
+
+```{r}
+fit.qda <- qda(as.factor(checks) ~  age + employed + citizen, Arrests, subset = train)
+fit.qda
+```
+
+```{r}
+pred.qda <- predict(fit.qda, data = Arrests, test=test)
+max(pred.qda$posterior[, 2])
+max(pred.qda$posterior[, 1])
+```
+
+Maksymalne przewidywane prawdopodobieństwo wzrostu liczby aresztowanych ludzi z wiekszą ilością aresztowań w 2002: 0.1957043
+Maksymalne przewidywane prawdopodobieństwo spadku liczby aresztowanych ludzi z wiekszą ilością aresztowań w 2002: 0.5161106
+
+Przewidywania lda i qda są bardzo podobne. Qda ma trochę większą wartość przewidującą spadek jednak jest ona bardzo bliska tej z lda.
+
+
+
